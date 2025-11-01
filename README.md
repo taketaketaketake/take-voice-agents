@@ -1,98 +1,66 @@
-# Twilio + Livekit Voice Agent
+# 🎤 Voice Agent
 
-AI Voice Agent that handles phone calls and SMS using Twilio and Livekit with minimal dependencies.
+A production-ready voice agent that handles phone calls using LiveKit and OpenAI. Perfect for customer service, support lines, or any telephony application.
 
-## Features
+## ✨ Features
 
-- ✅ **Minimal Dependencies**: Uses free OpenAI Whisper STT + OpenAI LLM/TTS
-- ✅ **CLI-First Setup**: All configuration via Livekit CLI commands
-- ✅ **Interruption Handling**: Natural conversation flow with built-in turn detection
-- ✅ **Phone & SMS**: Handles both voice calls and text messages
-- ✅ **Scalable**: Built on Livekit's robust infrastructure
+- **Real-time voice conversations** with natural speech processing
+- **OpenAI integration** for intelligent responses
+- **Phone system compatibility** via SIP/telephony providers
+- **Easy deployment** to any cloud platform
+- **Customizable personality** and conversation flow
 
-## Architecture
+## 🚀 Quick Start
 
-```
-Twilio Phone/SMS → SIP Trunk → Livekit Room → AI Voice Agent
-```
-
-## Quick Start
-
-1. **Setup Environment**
+1. **Clone and setup**
    ```bash
-   chmod +x setup.sh
-   ./setup.sh
+   git clone https://github.com/taketaketaketake/take-voice-agents.git
+   cd take-voice-agents
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
    ```
 
-2. **Configure API Keys**
-   Edit `.env` with your keys:
-   - Livekit: URL, API Key, API Secret
-   - OpenAI: API Key
-   - Twilio: Account SID, Auth Token, Phone Number
-
-3. **Configure SIP Integration**
+2. **Configure environment**
    ```bash
-   chmod +x configure_sip.sh
-   ./configure_sip.sh
+   cp .env.example .env
+   # Edit .env with your API keys
    ```
 
-4. **Start Voice Agent**
+3. **Run the agent**
    ```bash
-   source venv/bin/activate
-   python voice_agent.py
+   python voice_agent.py dev
    ```
 
-5. **Start SMS Handler** (separate terminal)
-   ```bash
-   source venv/bin/activate
-   python sms_handler.py
-   ```
+## 🔑 Required APIs
 
-## Twilio Configuration
+- **LiveKit** - Real-time voice infrastructure
+- **OpenAI** - Speech processing and AI responses
+- **Phone provider** - Twilio, Telnyx, or similar
 
-### For Voice Calls
-1. In Twilio Console, create a TwiML Bin
-2. Use content from `twilio_config/twiml_bin.xml`
-3. Replace placeholders with your actual values
-4. Configure your phone number to use this TwiML Bin
+## 📞 Use Cases
 
-### For SMS
-1. Set your phone number's SMS webhook to: `https://your-domain.com/sms`
-2. Deploy `sms_handler.py` to a public endpoint
+- Customer service automation
+- Appointment scheduling
+- Lead qualification
+- Support hotlines
+- Interactive voice responses
 
-## Cost Breakdown
+## 🛠️ Customization
 
-- **STT**: Free (OpenAI Whisper)
-- **LLM**: ~$0.15/1K tokens (GPT-4o-mini)
-- **TTS**: ~$15/1M characters (OpenAI TTS)
-- **Twilio**: Voice rates + SMS rates per your plan
-- **Livekit**: Free tier available
+Edit `voice_agent.py` to customize:
+- Agent personality and instructions
+- Voice model and speed
+- Response behavior
+- Integration workflows
 
-## File Structure
+## 📋 Requirements
 
-```
-├── voice_agent.py          # Main voice agent
-├── sms_handler.py          # SMS to call bridge
-├── requirements.txt        # Python dependencies
-├── setup.sh               # Automated setup
-├── configure_sip.sh       # SIP configuration
-├── .env.example           # Environment template
-├── sip_config/            # Livekit SIP configs
-└── twilio_config/         # Twilio TwiML templates
-```
+- Python 3.8+
+- LiveKit account
+- OpenAI API key
+- SIP/telephony provider
 
-## Development
+---
 
-- **Agent Name**: `telephony-voice-agent`
-- **Room Prefix**: `call-` (calls create rooms like `call-abc123`)
-- **Logging**: INFO level for debugging
-
-## Troubleshooting
-
-1. **Agent not connecting**: Check Livekit credentials and SIP trunk
-2. **No audio**: Verify Twilio TwiML configuration
-3. **SMS not working**: Ensure webhook URL is publicly accessible
-4. **High latency**: Consider using Livekit's regional endpoints
-
-  source venv/bin/activate
-  python voice_agent.py dev
+Ready to deploy? This agent works with Railway, Render, Docker, or any Python hosting platform.
