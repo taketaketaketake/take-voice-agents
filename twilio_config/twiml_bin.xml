@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial>
+    <Sip username="{{SIP_TRUNK_USERNAME}}" password="{{SIP_TRUNK_PASSWORD}}">
+      sip:{{TWILIO_PHONE_NUMBER}}@{{LIVEKIT_SIP_ENDPOINT}}
+    </Sip>
+  </Dial>
+</Response>

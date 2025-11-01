@@ -1,0 +1,6 @@
+livekit-agents
+openai
+python-dotenv
+fastapi
+uvicorn[standard]
+twilio
