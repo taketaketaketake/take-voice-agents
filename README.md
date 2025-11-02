@@ -37,6 +37,7 @@ A production-ready voice agent that handles phone calls using LiveKit and OpenAI
 - **LiveKit** - Real-time voice infrastructure
 - **OpenAI** - Speech processing and AI responses
 - **Phone provider** - Twilio, Telnyx, or similar
+- **Supabase** (optional) - Conversation memory and persistence
 
 ## 📞 Use Cases
 
@@ -46,6 +47,26 @@ A production-ready voice agent that handles phone calls using LiveKit and OpenAI
 - Support hotlines
 - Interactive voice responses
 
+## 🧠 Memory & Persistence
+
+The agent includes **Supabase memory** for conversation continuity:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+```
+
+**Features:**
+- Remembers previous conversations with same caller
+- Maintains context across multiple calls
+- Stores conversation history in `voice_agent_memory` table
+- Automatic caller identification via phone number
+
+**Setup:**
+1. Create Supabase project
+2. Add URL and anon key to `.env`
+3. Agent automatically creates memory table on first run
+
 ## 🛠️ Customization
 
 Edit `voice_agent.py` to customize:
@@ -53,6 +74,7 @@ Edit `voice_agent.py` to customize:
 - Voice model and speed
 - Response behavior
 - Integration workflows
+- Memory behavior and retention
 
 ## 📋 Requirements
 
