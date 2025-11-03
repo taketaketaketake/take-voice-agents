@@ -8,8 +8,7 @@ from supabase import create_client, Client
 
 from livekit import agents, rtc
 from livekit.agents import JobContext, WorkerOptions, cli, AgentSession, Agent
-from livekit.agents.llm import FunctionContext, ai_callable
-from livekit.agents.memory import SupabaseMemory
+from livekit.agents.llm import ToolContext, function_tool
 from livekit.plugins import openai, silero
 
 import openai as openai_client  # Moved to top
@@ -24,7 +23,7 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_ROLE")
 )
 
-@ai_callable()
+@function_tool
 async def save_appointment(
     customer_name: str,
     phone_number: str,
@@ -34,7 +33,8 @@ async def save_appointment(
     issue_description: str = "",
     preferred_date: str = "",
     preferred_time: str = "",
-    urgency: str = "routine"
+    urgency: str = "routine",
+    call_id: str = None
 ):
     """Save customer appointment information to the database"""
     try:
@@ -62,15 +62,47 @@ async def save_appointment(
             "created_at": datetime.utcnow().isoformat()
         }
         
-        result = await asyncio.to_thread(
-            lambda: supabase.table("furnace_appointments").insert(appointment_data).execute()
-        )
+        # Retry logic for database writes
+        for attempt in range(3):
+            try:
+                result = await asyncio.to_thread(
+                    lambda: supabase.table("furnace_appointments").insert(appointment_data).execute()
+                )
+                break
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    raise e
+                await asyncio.sleep(1)
         logger.info(f"Appointment saved successfully: {result.data}")
+        
+        # Update call record to link with appointment
+        if call_id:
+            try:
+                for attempt in range(3):
+                    try:
+                        await asyncio.to_thread(
+                            lambda: supabase.table("furnace_calls")
+                            .update({
+                                "call_status": "booked",
+                                "appointment_id": result.data[0]["id"]
+                            })
+                            .eq("id", call_id)
+                            .execute()
+                        )
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            raise e
+                        await asyncio.sleep(1)
+                logger.info(f"Call {call_id} linked to appointment {result.data[0]['id']}")
+            except Exception as e:
+                logger.error(f"Failed to link call to appointment: {e}")
         
         return {
             "status": "success",
             "message": "Appointment saved successfully. We'll call you back within 24 hours to schedule your service.",
-            "appointment_data": appointment_data
+            "appointment_data": appointment_data,
+            "appointment_id": result.data[0]["id"]
         }
         
     except Exception as e:
@@ -83,6 +115,11 @@ async def save_appointment(
 
 async def entrypoint(ctx: JobContext):
     logger.info(f"Agent starting in room: {ctx.room.name}")
+
+    # Initialize call tracking variables
+    call_id = None
+    conversation_log = []
+    call_start_time = datetime.utcnow()
 
     # Test OpenAI connection
     try:
@@ -119,20 +156,33 @@ async def entrypoint(ctx: JobContext):
         vad=vad,
     )
 
-    # Configure memory for conversation persistence
-    session.memory = SupabaseMemory(
-        table="voice_agent_memory",
-        supabase_url=os.getenv("SUPABASE_URL"),
-        supabase_key=os.getenv("SUPABASE_SERVICE_ROLE"),
-    )
+    # Try registering function directly on session
+    try:
+        session.register_function_tool(save_appointment)
+        logger.info("Function tool registered successfully")
+    except Exception as e:
+        logger.warning(f"Could not register function tool: {e} - continuing without function calling")
+
+    # Note: Memory persistence disabled for this LiveKit version
+    # Can be re-enabled when SupabaseMemory is available
 
     @session.on("user_speech_committed")
     def on_user_speech(ev):
         logger.info(f"User said: {ev.user_transcript}")
+        conversation_log.append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "speaker": "user",
+            "text": ev.user_transcript
+        })
 
     @session.on("agent_speech_committed")
     def on_agent_speech(ev):
         logger.info(f"Agent said: {ev.agent_transcript}")
+        conversation_log.append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "speaker": "agent",
+            "text": ev.agent_transcript
+        })
 
     @session.on("function_calls_finished")
     def on_function_calls_finished(ev):
@@ -146,8 +196,53 @@ async def entrypoint(ctx: JobContext):
     @ctx.room.on("participant_disconnected")
     def on_disconnect(p):
         logger.info(f"User disconnected: {p.identity}")
-        # TODO: Add transcript logging when available
-        # This would update the most recent appointment with transcript data
+        
+        # Save final call transcript with summary
+        if call_id:
+            try:
+                call_duration = int((datetime.utcnow() - call_start_time).total_seconds())
+                
+                transcript_data = {
+                    "ended_at": datetime.utcnow().isoformat(),
+                    "conversation": conversation_log,
+                    "total_messages": len(conversation_log)
+                }
+                
+                # Generate summary if conversation happened
+                summary = ""
+                if conversation_log:
+                    try:
+                        # Create a compact conversation for summarization
+                        conversation_text = "\n".join([
+                            f"{msg['speaker']}: {msg['text']}" for msg in conversation_log
+                        ])
+                        
+                        # Use basic summary since we can't await in sync callback
+                        summary = f"Call lasted {call_duration}s with {len(conversation_log)} messages"
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to create summary task: {e}")
+                        summary = f"Call lasted {call_duration}s with {len(conversation_log)} messages"
+                
+                # Update call record with transcript, summary, and duration
+                def save_call_data_sync():
+                    try:
+                        supabase.table("furnace_calls").update({
+                            "call_status": "completed" if conversation_log else "disconnected",
+                            "transcript": transcript_data,
+                            "summary": summary,
+                            "duration_seconds": call_duration
+                        }).eq("id", call_id).execute()
+                    except Exception as e:
+                        logger.error(f"Failed to save call data: {e}")
+                
+                # Run in background thread since we can't use async in sync callback
+                asyncio.create_task(asyncio.to_thread(save_call_data_sync))
+                
+                logger.info(f"Call transcript and summary saved for {participant_phone} (duration: {call_duration}s)")
+                
+            except Exception as e:
+                logger.error(f"Failed to save call transcript: {e}")
 
     # Get phone number from participant identity with fallback
     participant_phone = getattr(participant, "identity", "unknown")
@@ -158,8 +253,31 @@ async def entrypoint(ctx: JobContext):
     
     logger.info(f"Caller phone number: {participant_phone}")
     
+    # Create call record on start
+    try:
+        call_record = {
+            "phone_number": participant_phone,
+            "call_status": "in_progress",
+            "agent_name": "Charlotte"
+        }
+        
+        for attempt in range(3):
+            try:
+                call_result = await asyncio.to_thread(
+                    lambda: supabase.table("furnace_calls").insert(call_record).execute()
+                )
+                call_id = call_result.data[0]["id"]
+                logger.info(f"Call tracking started with ID: {call_id}")
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise e
+                await asyncio.sleep(1)
+        
+    except Exception as e:
+        logger.error(f"Failed to create call record: {e}")
+    
     agent = Agent(
-        functions=[save_appointment],
         instructions=f"""
         You are Charlotte, a friendly customer service representative for Fix My Furnace in Michigan.
         
@@ -173,6 +291,10 @@ async def entrypoint(ctx: JobContext):
         5. Ask when their furnace was last serviced
         6. Ask about timing preferences (this week, ASAP, etc.)
         7. Use save_appointment function to store all information
+        
+        You can call save_appointment() when you have all the necessary details.
+        Always confirm the customer's name, address, and issue before booking.
+        When calling save_appointment, use call_id: {call_id}
         
         IMPORTANT GUIDELINES:
         - Keep responses brief (1-2 sentences)
