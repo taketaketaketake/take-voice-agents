@@ -4,24 +4,28 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
-from supabase import create_client, Client
 
 from livekit import agents, rtc
 from livekit.agents import JobContext, WorkerOptions, cli, AgentSession, Agent
 from livekit.agents.llm import ToolContext, function_tool
+from livekit.agents.voice.background_audio import BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
 from livekit.plugins import openai, silero
 
-import openai as openai_client  # Moved to top
+import openai as openai_client
+from supabase_service import (
+    insert_appointment,
+    insert_call,
+    update_call,
+    link_call_to_appointment,
+    save_transcript,
+)
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Supabase client for appointments
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"), 
-    os.getenv("SUPABASE_SERVICE_ROLE")
-)
+# Global background audio player for function tools
+background_audio_player = None
 
 @function_tool
 async def save_appointment(
@@ -38,6 +42,11 @@ async def save_appointment(
 ):
     """Save customer appointment information to the database"""
     try:
+        # Add typing sounds while processing appointment
+        if background_audio_player:
+            typing_handle = background_audio_player.play(
+                AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.12)
+            )
         # Extract city from address if possible
         city = ""
         state = "Michigan"
@@ -59,50 +68,18 @@ async def save_appointment(
             "preferred_time": preferred_time,
             "urgency": urgency,
             "status": "new",
-            "created_at": datetime.utcnow().isoformat()
         }
         
-        # Retry logic for database writes
-        for attempt in range(3):
-            try:
-                result = await asyncio.to_thread(
-                    lambda: supabase.table("furnace_appointments").insert(appointment_data).execute()
-                )
-                break
-            except Exception as e:
-                if attempt == 2:  # Last attempt
-                    raise e
-                await asyncio.sleep(1)
-        logger.info(f"Appointment saved successfully: {result.data}")
+        result = await insert_appointment(appointment_data)
         
-        # Update call record to link with appointment
         if call_id:
-            try:
-                for attempt in range(3):
-                    try:
-                        await asyncio.to_thread(
-                            lambda: supabase.table("furnace_calls")
-                            .update({
-                                "call_status": "booked",
-                                "appointment_id": result.data[0]["id"]
-                            })
-                            .eq("id", call_id)
-                            .execute()
-                        )
-                        break
-                    except Exception as e:
-                        if attempt == 2:
-                            raise e
-                        await asyncio.sleep(1)
-                logger.info(f"Call {call_id} linked to appointment {result.data[0]['id']}")
-            except Exception as e:
-                logger.error(f"Failed to link call to appointment: {e}")
+            await link_call_to_appointment(call_id, result["id"])
         
         return {
             "status": "success",
             "message": "Appointment saved successfully. We'll call you back within 24 hours to schedule your service.",
             "appointment_data": appointment_data,
-            "appointment_id": result.data[0]["id"]
+            "appointment_id": result["id"]
         }
         
     except Exception as e:
@@ -141,6 +118,13 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logger.error(f"Failed to load VAD: {e}")
         return
+
+    # Initialize background audio for professional atmosphere
+    global background_audio_player
+    background_audio_player = BackgroundAudioPlayer(
+        ambient_sound=AudioConfig(BuiltinAudioClip.OFFICE_AMBIENCE, volume=0.08),
+        thinking_sound=AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=0.12)
+    )
 
     session = AgentSession(
         stt=openai.STT(),
@@ -197,6 +181,10 @@ async def entrypoint(ctx: JobContext):
     def on_disconnect(p):
         logger.info(f"User disconnected: {p.identity}")
         
+        # Cleanup background audio
+        if background_audio_player:
+            asyncio.create_task(background_audio_player.aclose())
+        
         # Save final call transcript with summary
         if call_id:
             try:
@@ -225,19 +213,14 @@ async def entrypoint(ctx: JobContext):
                         summary = f"Call lasted {call_duration}s with {len(conversation_log)} messages"
                 
                 # Update call record with transcript, summary, and duration
-                def save_call_data_sync():
+                async def save_call_data():
                     try:
-                        supabase.table("furnace_calls").update({
-                            "call_status": "completed" if conversation_log else "disconnected",
-                            "transcript": transcript_data,
-                            "summary": summary,
-                            "duration_seconds": call_duration
-                        }).eq("id", call_id).execute()
+                        await save_transcript(call_id, transcript_data, summary, call_duration)
                     except Exception as e:
                         logger.error(f"Failed to save call data: {e}")
                 
-                # Run in background thread since we can't use async in sync callback
-                asyncio.create_task(asyncio.to_thread(save_call_data_sync))
+                # Run in background since we can't use async in sync callback
+                asyncio.create_task(save_call_data())
                 
                 logger.info(f"Call transcript and summary saved for {participant_phone} (duration: {call_duration}s)")
                 
@@ -255,25 +238,8 @@ async def entrypoint(ctx: JobContext):
     
     # Create call record on start
     try:
-        call_record = {
-            "phone_number": participant_phone,
-            "call_status": "in_progress",
-            "agent_name": "Charlotte"
-        }
-        
-        for attempt in range(3):
-            try:
-                call_result = await asyncio.to_thread(
-                    lambda: supabase.table("furnace_calls").insert(call_record).execute()
-                )
-                call_id = call_result.data[0]["id"]
-                logger.info(f"Call tracking started with ID: {call_id}")
-                break
-            except Exception as e:
-                if attempt == 2:
-                    raise e
-                await asyncio.sleep(1)
-        
+        call_id = await insert_call(participant_phone)
+        logger.info(f"Call tracking started with ID: {call_id}")
     except Exception as e:
         logger.error(f"Failed to create call record: {e}")
     
@@ -314,6 +280,10 @@ async def entrypoint(ctx: JobContext):
     try:
         await session.start(room=ctx.room, agent=agent)
         logger.info("Voice agent ready and active")
+        
+        # Start background audio after session is started
+        await background_audio_player.start(room=ctx.room, agent_session=session)
+        logger.info("Background audio started")
         
         # Send initial greeting
         await session.say("Hi, this is Charlotte with Fix My Furnace! What's going on with your heating system today?", allow_interruptions=True)
