@@ -323,10 +323,9 @@ async def entrypoint(ctx: JobContext):
         1. Greet warmly and ask what's going on with their furnace
         2. Get their name
         3. Confirm their address (for service location)
-        4. Ask about their home size (square footage or bedrooms)
-        5. Ask when their furnace was last serviced
-        6. Ask about timing preferences (this week, ASAP, etc.)
-        7. Use save_appointment function to store all information
+        4. Ask when their furnace was last serviced
+        5. Ask about timing preferences (this week, ASAP, etc.)
+        6. Use save_appointment function to store all information
         
         You can call save_appointment() when you have all the necessary details.
         Always confirm the customer's name, address, and issue before booking.
