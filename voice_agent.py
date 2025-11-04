@@ -11,7 +11,6 @@ from livekit.agents.llm import ToolContext, function_tool, llm
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 from livekit.agents.voice.background_audio import BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
 from livekit.plugins import openai, silero
-from elevenlabs_tts import ElevenLabsTTS
 from collections.abc import AsyncIterable
 
 import openai as openai_client
