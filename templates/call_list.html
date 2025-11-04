@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix My Furnace - Call Monitor</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f7;
+            color: #1d1d1f;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e5e5e7;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007aff;
+        }
+        .refresh-btn {
+            background: #007aff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        .call-grid {
+            display: grid;
+            gap: 16px;
+        }
+        .call-card {
+            background: #f8f9fa;
+            border: 1px solid #e5e5e7;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .call-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        }
+        .call-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .phone-number {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1d1d1f;
+        }
+        .status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        .status.in_progress { background: #fef3c7; color: #92400e; }
+        .status.completed { background: #d1fae5; color: #065f46; }
+        .status.booked { background: #dbeafe; color: #1e40af; }
+        .status.disconnected { background: #fee2e2; color: #991b1b; }
+        .call-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .detail-item {
+            font-size: 14px;
+            color: #6b7280;
+        }
+        .detail-label {
+            font-weight: 500;
+            color: #374151;
+        }
+        .no-calls {
+            text-align: center;
+            padding: 60px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🔥 Fix My Furnace - Call Monitor</div>
+            <button class="refresh-btn" onclick="location.reload()">Refresh</button>
+        </div>
+
+        {% if calls %}
+            <div class="call-grid">
+                {% for call in calls %}
+                <div class="call-card" onclick="window.location.href='/call/{{ call.id }}'">
+                    <div class="call-header">
+                        <div class="phone-number">📞 {{ call.phone_number }}</div>
+                        <div class="status {{ call.call_status }}">{{ call.call_status }}</div>
+                    </div>
+                    
+                    <div class="call-details">
+                        <div class="detail-item">
+                            <div class="detail-label">Agent</div>
+                            {{ call.agent_name or 'Charlotte' }}
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Started</div>
+                            {{ call.created_at[:19].replace('T', ' ') if call.created_at else 'Unknown' }}
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Duration</div>
+                            {% if call.duration_seconds %}
+                                {{ call.duration_seconds }}s
+                            {% else %}
+                                {% if call.call_status == 'in_progress' %}
+                                    Active
+                                {% else %}
+                                    Unknown
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                        <div class="detail-item">
+                            <div class="detail-label">Messages</div>
+                            {% if call.transcript and call.transcript.get('total_messages') %}
+                                {{ call.transcript.get('total_messages') }}
+                            {% else %}
+                                0
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="no-calls">
+                <h3>No calls yet</h3>
+                <p>Call pages will appear here automatically when customers call in.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Auto-refresh every 10 seconds for live updates
+        setTimeout(() => location.reload(), 10000);
+    </script>
+</body>
+</html>

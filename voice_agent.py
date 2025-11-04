@@ -7,9 +7,11 @@ from dotenv import load_dotenv
 
 from livekit import agents, rtc
 from livekit.agents import JobContext, WorkerOptions, cli, AgentSession, Agent
-from livekit.agents.llm import ToolContext, function_tool
+from livekit.agents.llm import ToolContext, function_tool, llm
+from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 from livekit.agents.voice.background_audio import BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
 from livekit.plugins import openai, silero
+from collections.abc import AsyncIterable
 
 import openai as openai_client
 from supabase_service import (
@@ -27,6 +29,52 @@ logger = logging.getLogger(__name__)
 # Global background audio player for function tools
 background_audio_player = None
 
+
+# Global variables for pre-response functionality
+fast_llm = None
+session_instance = None
+
+# Global variables for latency tracking
+latency_metrics = {}
+
+async def generate_pre_response(user_message: str) -> str:
+    """Generate quick acknowledgment using fast LLM"""
+    global fast_llm
+    
+    start_time = datetime.utcnow()
+    
+    if not fast_llm:
+        fast_llm = openai.LLM(
+            model="gpt-3.5-turbo",
+            temperature=0.3,
+            max_tokens=15
+        )
+    
+    # Simple context for fast response
+    fast_response_messages = [
+        ChatMessage(
+            role="system", 
+            content="Generate a short professional response to acknowledge the customer's message with 5 to 10 words. You work for Fix My Furnace customer service. Examples: 'Let me help you with that', 'One moment while I check', 'I'll get that set up', 'That's a good question'."
+        ),
+        ChatMessage(role="user", content=user_message)
+    ]
+    
+    # Create simple chat context
+    fast_ctx = ChatContext(messages=fast_response_messages)
+    
+    # Generate quick response
+    response = ""
+    async for chunk in fast_llm.chat(chat_ctx=fast_ctx).to_str_iterable():
+        response += chunk
+    
+    # Track pre-response latency
+    end_time = datetime.utcnow()
+    latency_ms = int((end_time - start_time).total_seconds() * 1000)
+    logger.info(f"Pre-response latency: {latency_ms}ms")
+    
+    return response.strip()
+
+
 @function_tool
 async def save_appointment(
     customer_name: str,
@@ -42,6 +90,9 @@ async def save_appointment(
 ):
     """Save customer appointment information to the database"""
     try:
+        # Track function call latency
+        function_start_time = datetime.utcnow()
+        
         # Add typing sounds while processing appointment
         if background_audio_player:
             typing_handle = background_audio_player.play(
@@ -75,11 +126,17 @@ async def save_appointment(
         if call_id:
             await link_call_to_appointment(call_id, result["id"])
         
+        # Track function completion time
+        function_end_time = datetime.utcnow()
+        function_latency_ms = int((function_end_time - function_start_time).total_seconds() * 1000)
+        logger.info(f"save_appointment function latency: {function_latency_ms}ms")
+        
         return {
             "status": "success",
             "message": "Appointment saved successfully. We'll call you back within 24 hours to schedule your service.",
             "appointment_data": appointment_data,
-            "appointment_id": result["id"]
+            "appointment_id": result["id"],
+            "function_latency_ms": function_latency_ms
         }
         
     except Exception as e:
@@ -158,6 +215,19 @@ async def entrypoint(ctx: JobContext):
             "speaker": "user",
             "text": ev.user_transcript
         })
+        
+        # Generate immediate acknowledgment for natural conversation flow
+        async def send_pre_response():
+            try:
+                pre_response = await generate_pre_response(ev.user_transcript)
+                logger.info(f"Charlotte quick response: {pre_response}")
+                # Send quick acknowledgment without adding to chat context
+                await session.say(pre_response, allow_interruptions=True, add_to_chat_ctx=False)
+            except Exception as e:
+                logger.warning(f"Failed to generate pre-response: {e}")
+        
+        # Send pre-response asynchronously
+        asyncio.create_task(send_pre_response())
 
     @session.on("agent_speech_committed")
     def on_agent_speech(ev):
