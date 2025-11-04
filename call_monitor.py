@@ -1,9 +1,11 @@
 from flask import Flask, render_template, jsonify, request
 import os
 import json
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from supabase_service import cleanup_stale_calls
 
 load_dotenv()
 
@@ -14,6 +16,15 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_URL"), 
     os.getenv("SUPABASE_SERVICE_ROLE")
 )
+
+# Clean up stale calls on startup
+def startup_cleanup():
+    """Clean up stale in_progress calls when call monitor starts"""
+    try:
+        asyncio.run(cleanup_stale_calls())
+        print("✅ Cleaned up stale calls on startup")
+    except Exception as e:
+        print(f"❌ Failed to cleanup stale calls on startup: {e}")
 
 @app.route('/')
 def call_list():
@@ -86,9 +97,21 @@ def api_calls_list():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/cleanup-stale-calls', methods=['POST'])
+def api_cleanup_stale_calls():
+    """Manual cleanup endpoint for stale calls"""
+    try:
+        asyncio.run(cleanup_stale_calls())
+        return jsonify({"success": True, "message": "Stale calls cleaned up"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     # Create templates directory if it doesn't exist
     os.makedirs('templates', exist_ok=True)
+    
+    # Clean up stale calls before starting server
+    startup_cleanup()
     
     print("🌐 Call Monitor starting at http://localhost:5000")
     app.run(debug=True, host='0.0.0.0', port=5000)

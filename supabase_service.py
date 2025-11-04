@@ -53,6 +53,35 @@ async def insert_appointment(data: dict) -> dict:
 # -------------------------------
 # Call Tracking I/O
 # -------------------------------
+async def cleanup_stale_calls():
+    """Mark any in_progress calls as disconnected - only for startup cleanup."""
+    try:
+        # Find all calls still marked as in_progress
+        result = await _with_retries(
+            lambda: supabase.table("furnace_calls")
+            .select("id, created_at")
+            .eq("call_status", "in_progress")
+            .execute()
+        )
+        
+        stale_calls = result.data
+        if stale_calls:
+            logger.info(f"Found {len(stale_calls)} stale in_progress calls, marking as disconnected")
+            
+            # Update all stale calls to disconnected
+            for call in stale_calls:
+                await _with_retries(
+                    lambda: supabase.table("furnace_calls")
+                    .update({"call_status": "disconnected"})
+                    .eq("id", call["id"])
+                    .execute()
+                )
+                logger.info(f"Marked stale call {call['id']} as disconnected")
+        else:
+            logger.info("No stale calls found")
+            
+    except Exception as e:
+        logger.error(f"Failed to cleanup stale calls: {e}")
 async def insert_call(phone_number: str, agent_name="Charlotte") -> str:
     """Create a new call record and return its ID."""
     call_record = {

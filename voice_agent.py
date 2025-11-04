@@ -11,6 +11,7 @@ from livekit.agents.llm import ToolContext, function_tool, llm
 from livekit.agents.llm.chat_context import ChatContext, ChatMessage
 from livekit.agents.voice.background_audio import BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
 from livekit.plugins import openai, silero
+from elevenlabs_tts import ElevenLabsTTS
 from collections.abc import AsyncIterable
 
 import openai as openai_client
@@ -20,6 +21,7 @@ from supabase_service import (
     update_call,
     link_call_to_appointment,
     save_transcript,
+    cleanup_stale_calls,
 )
 
 load_dotenv()
@@ -150,6 +152,9 @@ async def save_appointment(
 async def entrypoint(ctx: JobContext):
     logger.info(f"Agent starting in room: {ctx.room.name}")
 
+    # Clean up any stale in_progress calls from previous sessions
+    await cleanup_stale_calls()
+
     # Initialize call tracking variables
     call_id = None
     conversation_log = []
@@ -194,8 +199,16 @@ async def entrypoint(ctx: JobContext):
             voice="alloy",
             speed=1.0
         ),
+        # tts=ElevenLabsTTS(
+        #     voice_id="pNInz6obpgDQGcFmaJgB",  # Adam - natural male voice
+        #     model="eleven_turbo_v2_5",        # Fast, high-quality model
+        #     stability=0.6,
+        #     similarity_boost=0.8,
+        #     style=0.2,
+        # ),
         vad=vad,
     )
+    
 
     # Try registering function directly on session
     try:
@@ -204,39 +217,34 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logger.warning(f"Could not register function tool: {e} - continuing without function calling")
 
+
     # Note: Memory persistence disabled for this LiveKit version
     # Can be re-enabled when SupabaseMemory is available
 
-    @session.on("user_speech_committed")
-    def on_user_speech(ev):
-        logger.info(f"User said: {ev.user_transcript}")
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(event):
+        logger.info(f"Conversation: {event.item.role} - {event.item.text_content}")
         conversation_log.append({
             "timestamp": datetime.utcnow().isoformat(),
-            "speaker": "user",
-            "text": ev.user_transcript
+            "speaker": "user" if event.item.role == "user" else "agent",
+            "text": event.item.text_content
         })
         
         # Generate immediate acknowledgment for natural conversation flow
         async def send_pre_response():
             try:
-                pre_response = await generate_pre_response(ev.user_transcript)
-                logger.info(f"Charlotte quick response: {pre_response}")
-                # Send quick acknowledgment without adding to chat context
-                await session.say(pre_response, allow_interruptions=True, add_to_chat_ctx=False)
+                if event.item.role == "user":
+                    pre_response = await generate_pre_response(event.item.text_content)
+                    logger.info(f"Charlotte quick response: {pre_response}")
+                    # Send quick acknowledgment without adding to chat context
+                    await session.say(pre_response, allow_interruptions=True, add_to_chat_ctx=False)
             except Exception as e:
                 logger.warning(f"Failed to generate pre-response: {e}")
         
-        # Send pre-response asynchronously
-        asyncio.create_task(send_pre_response())
+        # Send pre-response asynchronously for user messages only
+        if event.item.role == "user":
+            asyncio.create_task(send_pre_response())
 
-    @session.on("agent_speech_committed")
-    def on_agent_speech(ev):
-        logger.info(f"Agent said: {ev.agent_transcript}")
-        conversation_log.append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "speaker": "agent",
-            "text": ev.agent_transcript
-        })
 
     @session.on("function_calls_finished")
     def on_function_calls_finished(ev):
@@ -259,6 +267,8 @@ async def entrypoint(ctx: JobContext):
         if call_id:
             try:
                 call_duration = int((datetime.utcnow() - call_start_time).total_seconds())
+                
+                logger.info(f"Saving transcript with {len(conversation_log)} messages")
                 
                 transcript_data = {
                     "ended_at": datetime.utcnow().isoformat(),
