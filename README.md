@@ -287,7 +287,25 @@ python -c "import os; from dotenv import load_dotenv; load_dotenv(); print('✅ 
 - **DigitalOcean App Platform** - Managed container hosting
 - **Docker** - Custom containerized deployment
 
-**Setup Commands:**
+### Railway Deployment (Recommended)
+
+This project is pre-configured for Railway deployment with multi-service support:
+
+**Quick Deploy:**
+1. Connect your GitHub repo to Railway
+2. Railway auto-detects the 3 services from `Procfile`:
+   - `voice-agent`: Main voice processing service
+   - `call-monitor`: Web dashboard (port 5000)
+   - `sms-handler`: SMS API service (port 8000)
+3. Set environment variables in Railway dashboard
+4. Deploy and get webhook URLs for Twilio integration
+
+**Railway Files:**
+- `railway.json` - Platform configuration
+- `Procfile` - Service definitions
+- `.railwayignore` - Deployment exclusions
+
+**Manual Setup Commands:**
 ```bash
 # Install dependencies
 pip install -r requirements.txt
